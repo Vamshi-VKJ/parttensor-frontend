@@ -472,10 +472,29 @@ try {
   // Build follow-up suggestions based on intent
   const followUps = buildFollowUps(data, q);
 
-  addMessage({
-    role: "assistant",
-    content: data.text || "",
-    data: data,
+  // If BOM, fetch stock in background
+if (data.bomItems && data.bomItems.length > 0) {
+  var bomPNs = data.bomItems.map(function(p) { return p.partNumber; });
+  fetch(BACKEND_URL + "/api/stock-bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ partNumbers: bomPNs }),
+  }).then(function(r) { return r.json(); }).then(function(stockData) {
+    setMessages(function(prev) {
+      return prev.map(function(msg) {
+        if (msg.data && msg.data.bomItems && msg.data.projectName === data.projectName) {
+          return Object.assign({}, msg, { data: Object.assign({}, msg.data, { stockData: stockData }) });
+        }
+        return msg;
+      });
+    });
+  }).catch(function(e) { console.error("BOM stock fetch failed:", e); });
+}
+
+addMessage({
+  role: "assistant",
+  content: data.text || "",
+  data: data,
     followUps: followUps,
     id: Date.now(),
   });
