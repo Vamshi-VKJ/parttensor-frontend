@@ -432,8 +432,11 @@ setLoading(true);
 
 // Build conversation history for context
 const history = messages.map(function(m) {
-  return { role: m.role, content: m.content || "" };
-});
+  return {
+    role: m.role,
+    content: m.content || (m.data ? JSON.stringify({ intent: m.data.intent, category: m.data.category, parts: (m.data.results || m.data.alternatives || []).map(function(p) { return p.partNumber; }).join(", ") }) : "")
+  };
+}).filter(function(m) { return m.content.trim(); });
 
 try {
   const res = await fetch(BACKEND_URL + "/api/chat", {
