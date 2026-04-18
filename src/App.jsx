@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
 const SUPABASE_URL = "https://pchmgfmrdsnuhijbdgys.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzUwMDUsImV4cCI6MjA5MjAxMTAwNX0.Rta2rut_nxF0nUqwfGYuCm3GwYHUQCY-54KnwgF9rZw";
-const RAZORPAY_KEY_ID = "rzp_test_Setn6mVGbRbeKx";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5NzM0NjQsImV4cCI6MjA2MDU0OTQ2NH0.your-key-here";
+const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY";
 
 var GUEST_LIMIT = 10;
 var FREE_LIMIT = 50;
@@ -31,10 +31,27 @@ async function supaFetch(path, method, body, token) {
   } catch (e) { return { ok: false, status: 0, data: null }; }
 }
 
-async function signInWithOTP(email) {
+// Auth functions
+async function signUpWithPassword(email, password) {
+  return await supaFetch("/auth/v1/signup", "POST", {
+    email: email,
+    password: password,
+    gotrue_meta_security: {}
+  });
+}
+
+async function signInWithPassword(email, password) {
+  return await supaFetch("/auth/v1/token?grant_type=password", "POST", {
+    email: email,
+    password: password,
+    gotrue_meta_security: {}
+  });
+}
+
+async function sendOTP(email) {
   return await supaFetch("/auth/v1/otp", "POST", {
     email: email,
-    create_user: true,
+    create_user: false,
     gotrue_meta_security: {}
   });
 }
@@ -48,10 +65,21 @@ async function verifyOTP(email, token) {
   });
 }
 
-async function signInWithGoogle() {
-  var redirectTo = window.location.origin;
-  var res = await supaFetch("/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(redirectTo), "GET");
-  return res;
+async function refreshSession(refreshToken) {
+  return await supaFetch("/auth/v1/token?grant_type=refresh_token", "POST", {
+    refresh_token: refreshToken
+  });
+}
+
+async function checkUserExists(email) {
+  // Try signing in with a wrong password - if error is "Invalid credentials" user exists
+  // If error is "Email not confirmed" user exists but not verified
+  // We use OTP send - if user exists it sends, if not it creates
+  return await supaFetch("/auth/v1/otp", "POST", {
+    email: email,
+    create_user: false,
+    gotrue_meta_security: {}
+  });
 }
 
 function getGoogleAuthURL() {
@@ -183,61 +211,138 @@ function PTLogo({ size }) {
 }
 
 // =============================================
-// AUTH MODAL - Email OTP + Google
+// AUTH MODAL
+// Sign In: Email + Password (returning users)
+// Sign Up: Email + Password + OTP verification
+// Google: One click
 // =============================================
 function AuthModal({ mode, onAuth, onClose }) {
+  var [tab, setTab] = useState("signin");
   var [email, setEmail] = useState("");
+  var [password, setPassword] = useState("");
+  var [confirmPassword, setConfirmPassword] = useState("");
   var [otp, setOtp] = useState("");
-  var [step, setStep] = useState("email");
+  var [step, setStep] = useState("form"); // form | otp
   var [loading, setLoading] = useState(false);
   var [error, setError] = useState("");
+  var [showPassword, setShowPassword] = useState(false);
 
-  async function handleSendOTP(e) {
+  function resetForm() {
+    setEmail(""); setPassword(""); setConfirmPassword(""); setOtp("");
+    setStep("form"); setError(""); setLoading(false);
+  }
+
+  function switchTab(t) {
+    setTab(t); resetForm();
+  }
+
+  // SIGN IN with password
+  async function handleSignIn(e) {
     e.preventDefault();
     if (!email || !email.includes("@")) { setError("Please enter a valid email"); return; }
+    if (!password || password.length < 6) { setError("Password must be at least 6 characters"); return; }
     setLoading(true); setError("");
-    var res = await signInWithOTP(email);
+    var res = await signInWithPassword(email, password);
     setLoading(false);
-    console.log("OTP response:", res.status, JSON.stringify(res.data));
-    if (res.ok || res.status === 200 || res.status === 201) {
-      setStep("otp");
+    console.log("Sign in response:", res.status, JSON.stringify(res.data));
+    if (res.ok && res.data && res.data.access_token) {
+      onAuth(res.data);
     } else {
-      var errMsg = "Could not send OTP";
-      if (res.data) {
-        if (res.data.msg) errMsg = res.data.msg;
-        else if (res.data.message) errMsg = res.data.message;
-        else if (res.data.error_description) errMsg = res.data.error_description;
-        else if (res.data.error) errMsg = res.data.error;
-        else errMsg = "Error " + res.status + ": " + JSON.stringify(res.data).substring(0, 80);
-      }
+      var errMsg = "Invalid email or password";
+      if (res.data && res.data.error_description) errMsg = res.data.error_description;
+      else if (res.data && res.data.msg) errMsg = res.data.msg;
+      else if (res.data && res.data.message) errMsg = res.data.message;
       setError(errMsg);
     }
   }
 
+  // SIGN UP - step 1: create account
+  async function handleSignUp(e) {
+    e.preventDefault();
+    if (!email || !email.includes("@")) { setError("Please enter a valid email"); return; }
+    if (!password || password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match"); return; }
+    setLoading(true); setError("");
+    var res = await signUpWithPassword(email, password);
+    console.log("Sign up response:", res.status, JSON.stringify(res.data));
+    if (res.ok && res.data) {
+      // Send OTP for email verification
+      var otpRes = await sendOTP(email);
+      setLoading(false);
+      console.log("OTP send response:", otpRes.status, JSON.stringify(otpRes.data));
+      if (otpRes.ok || otpRes.status === 200 || otpRes.status === 201) {
+        setStep("otp");
+      } else {
+        // Account created, OTP failed - try to sign in directly
+        var signinRes = await signInWithPassword(email, password);
+        if (signinRes.ok && signinRes.data && signinRes.data.access_token) {
+          onAuth(signinRes.data);
+        } else {
+          setError("Account created! Please sign in.");
+          setTab("signin"); setStep("form");
+        }
+      }
+    } else {
+      setLoading(false);
+      var signUpErr = "Could not create account";
+      if (res.data && res.data.msg) signUpErr = res.data.msg;
+      else if (res.data && res.data.message) signUpErr = res.data.message;
+      else if (res.data && res.data.error_description) signUpErr = res.data.error_description;
+      // User already exists
+      if (signUpErr.toLowerCase().includes("already") || signUpErr.toLowerCase().includes("registered") || res.status === 422) {
+        setError("Email already registered. Please sign in instead.");
+        setTab("signin"); setStep("form");
+      } else {
+        setError(signUpErr);
+      }
+    }
+  }
+
+  // VERIFY OTP after signup
   async function handleVerifyOTP(e) {
     e.preventDefault();
-    if (!otp || otp.length < 4) { setError("Please enter the OTP from your email"); return; }
+    if (!otp || otp.length < 4) { setError("Please enter the verification code"); return; }
     setLoading(true); setError("");
     var res = await verifyOTP(email, otp);
     setLoading(false);
-    console.log("Verify response:", res.status, JSON.stringify(res.data));
+    console.log("Verify OTP response:", res.status, JSON.stringify(res.data));
     if (res.ok && res.data && res.data.access_token) {
       onAuth(res.data);
     } else {
-      var errMsg = "Invalid or expired code";
-      if (res.data && res.data.msg) errMsg = res.data.msg;
-      else if (res.data && res.data.message) errMsg = res.data.message;
-      setError(errMsg);
+      // OTP verified but need to sign in with password
+      var signinRes = await signInWithPassword(email, password);
+      if (signinRes.ok && signinRes.data && signinRes.data.access_token) {
+        onAuth(signinRes.data);
+      } else {
+        var errMsg = "Invalid or expired code. Please try again.";
+        if (res.data && res.data.msg) errMsg = res.data.msg;
+        setError(errMsg);
+      }
     }
+  }
+
+  // FORGOT PASSWORD
+  async function handleForgotPassword() {
+    if (!email || !email.includes("@")) { setError("Enter your email first"); return; }
+    setLoading(true);
+    await supaFetch("/auth/v1/recover", "POST", { email: email });
+    setLoading(false);
+    setError("Password reset email sent! Check your inbox.");
   }
 
   function handleGoogleLogin() {
     window.location.href = getGoogleAuthURL();
   }
 
+  var inputStyle = { width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none", color: "#0f172a", background: "#f8fafc", fontFamily: "inherit" };
+  var btnStyle = { width: "100%", padding: "12px", borderRadius: 10, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+  var labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 };
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+      <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.2)", maxHeight: "90vh", overflowY: "auto" }}>
+
+        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <PTLogo size={32} />
@@ -246,19 +351,40 @@ function AuthModal({ mode, onAuth, onClose }) {
               <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, letterSpacing: 1 }}>HARDWARE AI</div>
             </div>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer", lineHeight: 1 }}>x</button>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer" }}>x</button>
         </div>
 
+        {/* Limit warning */}
         {mode === "limit" && (
           <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 20, fontSize: 13, color: "#92400e" }}>
-            You have used your {GUEST_LIMIT} free messages today. Sign in for {FREE_LIMIT} messages/day free.
+            You have used your {GUEST_LIMIT} free messages today. Sign in for {FREE_LIMIT}/day free.
           </div>
         )}
 
-        {step === "email" ? (
+        {/* OTP verification step (after signup) */}
+        {step === "otp" ? (
+          <form onSubmit={handleVerifyOTP}>
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>Email</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>Verify your email</div>
+              <div style={{ fontSize: 13, color: "#64748b" }}>Code sent to <strong>{email}</strong></div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Enter verification code</label>
+              <input type="text" value={otp} onChange={function(e) { setOtp(e.target.value.replace(/[^0-9]/g, "")); setError(""); }} placeholder="00000000" maxLength={8} autoFocus style={Object.assign({}, inputStyle, { fontSize: 28, fontWeight: 800, letterSpacing: 8, textAlign: "center", fontFamily: "'DM Mono', monospace" })} />
+            </div>
+            {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
+            <button type="submit" disabled={loading} style={Object.assign({}, btnStyle, { opacity: loading ? 0.7 : 1 })}>
+              {loading ? "Verifying..." : "Verify and Sign In"}
+            </button>
+            <button type="button" onClick={function() { setStep("form"); setOtp(""); setError(""); }} style={{ width: "100%", padding: "9px", borderRadius: 10, background: "none", color: "#64748b", border: "none", fontSize: 13, cursor: "pointer", marginTop: 6 }}>
+              Back
+            </button>
+          </form>
+        ) : (
           <div>
-            {/* Google Login */}
-            <button onClick={handleGoogleLogin} style={{ width: "100%", padding: "12px", borderRadius: 10, background: "#fff", border: "1.5px solid #e2e8f0", color: "#0f172a", fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16 }}>
+            {/* Google login */}
+            <button onClick={handleGoogleLogin} style={{ width: "100%", padding: "12px", borderRadius: 10, background: "#fff", border: "1.5px solid #e2e8f0", color: "#0f172a", fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16, fontFamily: "inherit" }}>
               <svg width="20" height="20" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -274,36 +400,82 @@ function AuthModal({ mode, onAuth, onClose }) {
               <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
             </div>
 
-            <form onSubmit={handleSendOTP}>
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Email address</label>
-                <input type="email" value={email} onChange={function(e) { setEmail(e.target.value); setError(""); }} placeholder="you@company.com" autoFocus style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 14, outline: "none", color: "#0f172a" }} />
-              </div>
-              {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
-              <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 10, background: loading ? "#94a3b8" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-                {loading ? "Sending..." : "Send OTP Code"}
+            {/* Tabs */}
+            <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, marginBottom: 20 }}>
+              <button onClick={function() { switchTab("signin"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, background: tab === "signin" ? "#fff" : "none", border: "none", fontWeight: tab === "signin" ? 700 : 500, color: tab === "signin" ? "#0f172a" : "#64748b", cursor: "pointer", fontSize: 14, fontFamily: "inherit", boxShadow: tab === "signin" ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                Sign In
               </button>
-              <div style={{ marginTop: 12, fontSize: 12, color: "#94a3b8", textAlign: "center" }}>No password needed. We send a 6-digit code to your email.</div>
-            </form>
+              <button onClick={function() { switchTab("signup"); }} style={{ flex: 1, padding: "8px", borderRadius: 8, background: tab === "signup" ? "#fff" : "none", border: "none", fontWeight: tab === "signup" ? 700 : 500, color: tab === "signup" ? "#0f172a" : "#64748b", cursor: "pointer", fontSize: 14, fontFamily: "inherit", boxShadow: tab === "signup" ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                Create Account
+              </button>
+            </div>
+
+            {/* SIGN IN FORM */}
+            {tab === "signin" && (
+              <form onSubmit={handleSignIn}>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Email</label>
+                  <input type="email" value={email} onChange={function(e) { setEmail(e.target.value); setError(""); }} placeholder="you@company.com" autoFocus style={inputStyle} />
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <label style={labelStyle}>Password</label>
+                  <div style={{ position: "relative" }}>
+                    <input type={showPassword ? "text" : "password"} value={password} onChange={function(e) { setPassword(e.target.value); setError(""); }} placeholder="Your password" style={Object.assign({}, inputStyle, { paddingRight: 44 })} />
+                    <button type="button" onClick={function() { setShowPassword(!showPassword); }} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
+                      {showPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", marginBottom: 16 }}>
+                  <button type="button" onClick={handleForgotPassword} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                    Forgot password?
+                  </button>
+                </div>
+                {error && <div style={{ color: error.includes("sent") ? "#16a34a" : "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: error.includes("sent") ? "#f0fdf4" : "#fef2f2", borderRadius: 8 }}>{error}</div>}
+                <button type="submit" disabled={loading} style={Object.assign({}, btnStyle, { opacity: loading ? 0.7 : 1 })}>
+                  {loading ? "Signing in..." : "Sign In"}
+                </button>
+                <div style={{ textAlign: "center", marginTop: 12, fontSize: 13, color: "#94a3b8" }}>
+                  No account?
+                  <button type="button" onClick={function() { switchTab("signup"); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 4, fontSize: 13 }}>Create one</button>
+                </div>
+              </form>
+            )}
+
+            {/* SIGN UP FORM */}
+            {tab === "signup" && (
+              <form onSubmit={handleSignUp}>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Email</label>
+                  <input type="email" value={email} onChange={function(e) { setEmail(e.target.value); setError(""); }} placeholder="you@company.com" autoFocus style={inputStyle} />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Password</label>
+                  <div style={{ position: "relative" }}>
+                    <input type={showPassword ? "text" : "password"} value={password} onChange={function(e) { setPassword(e.target.value); setError(""); }} placeholder="Min 6 characters" style={Object.assign({}, inputStyle, { paddingRight: 44 })} />
+                    <button type="button" onClick={function() { setShowPassword(!showPassword); }} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 13 }}>
+                      {showPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={labelStyle}>Confirm Password</label>
+                  <input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={function(e) { setConfirmPassword(e.target.value); setError(""); }} placeholder="Repeat password" style={inputStyle} />
+                </div>
+                {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
+                <button type="submit" disabled={loading} style={Object.assign({}, btnStyle, { opacity: loading ? 0.7 : 1 })}>
+                  {loading ? "Creating account..." : "Create Account"}
+                </button>
+                <div style={{ marginTop: 12, fontSize: 11, color: "#94a3b8", textAlign: "center", lineHeight: 1.5 }}>
+                  A verification code will be sent to your email.
+                </div>
+                <div style={{ textAlign: "center", marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
+                  Already have an account?
+                  <button type="button" onClick={function() { switchTab("signin"); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 4, fontSize: 13 }}>Sign in</button>
+                </div>
+              </form>
+            )}
           </div>
-        ) : (
-          <form onSubmit={handleVerifyOTP}>
-            <div style={{ textAlign: "center", marginBottom: 20 }}>
-              <div style={{ fontSize: 14, color: "#64748b" }}>Code sent to</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{email}</div>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Enter 6-digit code</label>
-              <input type="text" value={otp} onChange={function(e) { setOtp(e.target.value.replace(/[^0-9]/g, "")); setError(""); }} placeholder="000000" maxLength={6} autoFocus style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 28, fontWeight: 800, letterSpacing: 10, outline: "none", color: "#0f172a", textAlign: "center", fontFamily: "'DM Mono', monospace" }} />
-            </div>
-            {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
-            <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 10, background: loading ? "#94a3b8" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-              {loading ? "Verifying..." : "Sign In"}
-            </button>
-            <button type="button" onClick={function() { setStep("email"); setOtp(""); setError(""); }} style={{ width: "100%", padding: "9px", borderRadius: 10, background: "none", color: "#64748b", border: "none", fontSize: 13, cursor: "pointer", marginTop: 6 }}>
-              Use different email
-            </button>
-          </form>
         )}
       </div>
     </div>
@@ -322,38 +494,32 @@ function UpgradeModal({ onClose, onSignIn, onPay }) {
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer" }}>x</button>
         </div>
         <div style={{ fontSize: 14, color: "#64748b", marginBottom: 24 }}>You have reached your daily limit. Upgrade for unlimited access.</div>
-
         <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
           <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #e2e8f0", textAlign: "center" }}>
             <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Monthly</div>
             <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 99</div>
             <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>per month</div>
-            <button onClick={function() { onPay("monthly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-              Get Monthly
-            </button>
+            <button onClick={function() { onPay("monthly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Get Monthly</button>
           </div>
           <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #7c3aed", background: "#faf5ff", textAlign: "center", position: "relative" }}>
-            <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#7c3aed", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99 }}>BEST VALUE</div>
+            <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#7c3aed", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99, whiteSpace: "nowrap" }}>BEST VALUE</div>
             <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Annual</div>
             <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 799</div>
             <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>Rs 66/month</div>
-            <button onClick={function() { onPay("yearly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-              Get Annual
-            </button>
+            <button onClick={function() { onPay("yearly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Get Annual</button>
           </div>
         </div>
-
         <div style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: 10, fontSize: 13, color: "#475569", marginBottom: 16 }}>
           <div style={{ fontWeight: 700, marginBottom: 6, color: "#0f172a" }}>Pro includes:</div>
           <div>Unlimited messages/day</div>
-          <div>Full BOM generation</div>
-          <div>Excel BOM upload</div>
-          <div>Chat history</div>
+          <div>Full BOM generation and download</div>
+          <div>Excel BOM upload with alternatives</div>
+          <div>Chat history across sessions</div>
           <div>Priority support</div>
         </div>
-
         <div style={{ textAlign: "center", fontSize: 13, color: "#94a3b8" }}>
-          Not ready? <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Sign in for {FREE_LIMIT} free/day</button>
+          Not ready?
+          <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 4, fontSize: 13 }}>Sign in for {FREE_LIMIT} free/day</button>
         </div>
       </div>
     </div>
@@ -366,7 +532,6 @@ function UpgradeModal({ onClose, onSignIn, onPay }) {
 function PartFeedback({ partNumber, manufacturer, query, componentType }) {
   var [voted, setVoted] = useState(null);
   var [submitting, setSubmitting] = useState(false);
-
   async function handleFeedback(feedback) {
     if (voted || submitting) return;
     setSubmitting(true);
@@ -374,16 +539,11 @@ function PartFeedback({ partNumber, manufacturer, query, componentType }) {
     setVoted(feedback);
     setSubmitting(false);
   }
-
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }} onClick={function(e) { e.stopPropagation(); }}>
       <span style={{ fontSize: 11, color: "#94a3b8" }}>Helpful?</span>
-      <button onClick={function() { handleFeedback("good"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "good" ? "#16a34a" : "#e2e8f0"), background: voted === "good" ? "#f0fdf4" : "#fff", color: voted === "good" ? "#16a34a" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>
-        Yes
-      </button>
-      <button onClick={function() { handleFeedback("bad"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "bad" ? "#dc2626" : "#e2e8f0"), background: voted === "bad" ? "#fef2f2" : "#fff", color: voted === "bad" ? "#dc2626" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>
-        No
-      </button>
+      <button onClick={function() { handleFeedback("good"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "good" ? "#16a34a" : "#e2e8f0"), background: voted === "good" ? "#f0fdf4" : "#fff", color: voted === "good" ? "#16a34a" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>Yes</button>
+      <button onClick={function() { handleFeedback("bad"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "bad" ? "#dc2626" : "#e2e8f0"), background: voted === "bad" ? "#fef2f2" : "#fff", color: voted === "bad" ? "#dc2626" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>No</button>
       {voted && <span style={{ fontSize: 11, color: "#94a3b8" }}>Thanks!</span>}
     </div>
   );
@@ -409,7 +569,6 @@ function PartCard({ part, stock, isAlt, rank, msg, idx }) {
   var ct = msg && msg.data && msg.data.componentType;
   var rv = msg && msg.data && msg.data.requiredVoltage;
   var rc2 = msg && msg.data && msg.data.requiredCurrent;
-
   return (
     <div onClick={function() { trackClick("card_click", part.partNumber, part.manufacturer, query, (idx || 0) + 1, ct, rv, rc2); }} style={{ background: "#fff", borderRadius: 12, border: "1px solid " + (rank === "top" ? "#bfdbfe" : "#e2e8f0"), padding: "14px 16px", marginBottom: 8, cursor: "pointer", boxShadow: rank === "top" ? "0 4px 16px rgba(37,99,235,0.08)" : "0 1px 4px rgba(0,0,0,0.04)", transition: "all 0.18s" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
@@ -641,7 +800,7 @@ export default function App() {
   var fileInputRef = useRef(null);
   var retryRef = useRef(0);
 
-  // Handle Google OAuth callback and magic link callback
+  // Handle Google OAuth callback
   useEffect(function() {
     var hash = window.location.hash;
     if (hash && hash.includes("access_token")) {
@@ -652,7 +811,7 @@ export default function App() {
         var authData = {
           access_token: accessToken,
           refresh_token: params.get("refresh_token") || "",
-          expires_at: parseInt(expiresAt) || Math.floor(Date.now() / 1000) + 3600,
+          expires_at: parseInt(expiresAt) || Math.floor(Date.now() / 1000) + 604800,
         };
         supaFetch("/auth/v1/user", "GET", null, accessToken).then(function(res) {
           if (res.ok && res.data) {
@@ -666,16 +825,31 @@ export default function App() {
     }
   }, []);
 
-  // Load auth from localStorage
+  // Load auth - with token refresh for remember me
   useEffect(function() {
     var saved = localStorage.getItem("pt_auth");
     if (saved) {
       try {
         var parsed = JSON.parse(saved);
-        if (parsed && parsed.access_token && parsed.expires_at && Date.now() < parsed.expires_at * 1000) {
-          setAuth(parsed);
-        } else {
-          localStorage.removeItem("pt_auth");
+        if (parsed && parsed.access_token) {
+          if (parsed.expires_at && Date.now() < parsed.expires_at * 1000) {
+            setAuth(parsed);
+          } else if (parsed.refresh_token) {
+            // Token expired - refresh it silently
+            refreshSession(parsed.refresh_token).then(function(res) {
+              if (res.ok && res.data && res.data.access_token) {
+                var newAuth = Object.assign({}, parsed, res.data);
+                // Set expires_at to 7 days from now
+                newAuth.expires_at = Math.floor(Date.now() / 1000) + 604800;
+                localStorage.setItem("pt_auth", JSON.stringify(newAuth));
+                setAuth(newAuth);
+              } else {
+                localStorage.removeItem("pt_auth");
+              }
+            });
+          } else {
+            localStorage.removeItem("pt_auth");
+          }
         }
       } catch (e) { localStorage.removeItem("pt_auth"); }
     }
@@ -702,6 +876,10 @@ export default function App() {
   }
 
   async function handleAuth(authData) {
+    // Set long expiry for remember me (7 days)
+    if (authData.expires_in) {
+      authData.expires_at = Math.floor(Date.now() / 1000) + 604800;
+    }
     localStorage.setItem("pt_auth", JSON.stringify(authData));
     setAuth(authData);
     setShowAuth(false);
@@ -741,7 +919,7 @@ export default function App() {
 
   function checkLimit() {
     if (userPlan === "paid") return true;
-    if (auth) return true; // backend enforces free limit
+    if (auth) return true;
     var usage = getGuestUsage();
     if ((usage.count || 0) >= GUEST_LIMIT) {
       setAuthMode("limit");
@@ -767,18 +945,14 @@ export default function App() {
     if (!q) return;
     if (!checkLimit()) return;
     setInput("");
-
     var userMsg = { role: "user", content: q, id: Date.now() };
     addMessage(userMsg);
     setLoading(true);
-
     if (!auth) {
       var newCount = incrementGuestUsage();
       setGuestCount(newCount);
     }
-
     var history = messages.map(function(m) { return { role: m.role, content: m.content || "" }; });
-
     var sessionId = currentSessionId;
     if (!sessionId && auth) {
       var title = q.length > 40 ? q.substring(0, 40) + "..." : q;
@@ -790,12 +964,10 @@ export default function App() {
         await loadSessions();
       }
     }
-
     if (sessionId && auth) {
       var user2 = auth.user || auth;
       await saveMessage(sessionId, user2.id, "user", q, null, auth.access_token);
     }
-
     try {
       var res = await fetch(BACKEND_URL + "/api/chat", {
         method: "POST",
@@ -808,14 +980,11 @@ export default function App() {
           plan: userPlan === "paid" ? "paid" : auth ? "free" : "guest",
         }),
       });
-
       var data = await res.json();
-
       if (data.error) {
         if (data.limitReached) {
           setLoading(false);
-          if (auth) { setShowUpgrade(true); }
-          else { setAuthMode("limit"); setShowAuth(true); }
+          if (auth) { setShowUpgrade(true); } else { setAuthMode("limit"); setShowAuth(true); }
           return;
         }
         if ((data.error.includes("busy") || data.error.includes("overload")) && retryRef.current < 2) {
@@ -828,9 +997,7 @@ export default function App() {
         setLoading(false);
         return;
       }
-
       retryRef.current = 0;
-
       if (data.bomItems && data.bomItems.length > 0) {
         var bomPNs = data.bomItems.map(function(p) { return p.partNumber; });
         fetch(BACKEND_URL + "/api/stock-bulk", {
@@ -848,10 +1015,8 @@ export default function App() {
           });
         }).catch(function(e) { console.error("BOM stock failed:", e); });
       }
-
       var aiMsg = { role: "assistant", content: data.text || "", data: data, id: Date.now() };
       addMessage(aiMsg);
-
       if (sessionId && auth) {
         var user3 = auth.user || auth;
         await saveMessage(sessionId, user3.id, "assistant", data.text || "", data, auth.access_token);
@@ -862,7 +1027,6 @@ export default function App() {
           await loadSessions();
         }
       }
-
       setLoading(false);
     } catch (e) {
       addMessage({ role: "assistant", content: "Cannot connect to the server. Please check your connection.", id: Date.now() });
@@ -904,11 +1068,11 @@ export default function App() {
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f8fafc", fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-6px)} }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
       `}</style>
 
       {showAuth && <AuthModal mode={authMode} onAuth={handleAuth} onClose={function() { setShowAuth(false); setAuthMode("default"); }} />}
@@ -944,13 +1108,9 @@ export default function App() {
           {auth && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user && user.email}</div>}
           {userPlan === "paid" && <div style={{ fontSize: 11, color: "#7c3aed", background: "#faf5ff", padding: "3px 10px", borderRadius: 99, fontWeight: 700, border: "1px solid #e9d5ff" }}>PRO</div>}
           {!auth ? (
-            <button onClick={function() { setAuthMode("default"); setShowAuth(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              Sign In
-            </button>
+            <button onClick={function() { setAuthMode("default"); setShowAuth(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
           ) : userPlan !== "paid" ? (
-            <button onClick={function() { setShowUpgrade(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              Upgrade
-            </button>
+            <button onClick={function() { setShowUpgrade(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Upgrade</button>
           ) : null}
         </div>
       </div>
@@ -981,31 +1141,23 @@ export default function App() {
             </div>
           </div>
         )}
-
         {messages.map(function(msg) { return <MessageBubble key={msg.id} msg={msg} />; })}
-
         {loading && (
           <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start" }}>
             <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", display: "flex", alignItems: "center", justifyContent: "center" }}><PTLogo size={20} /></div>
             <TypingDots />
           </div>
         )}
-
         {!auth && guestCount === GUEST_LIMIT - 2 && (
           <div style={{ textAlign: "center", padding: "12px 20px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, marginBottom: 16, fontSize: 13, color: "#92400e" }}>
             2 free messages remaining today.
-            <button onClick={function() { setShowAuth(true); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 6, fontSize: 13 }}>
-              Sign in for {FREE_LIMIT}/day free
-            </button>
+            <button onClick={function() { setShowAuth(true); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 6, fontSize: 13 }}>Sign in for {FREE_LIMIT}/day free</button>
           </div>
         )}
-
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ textAlign: "center", padding: "4px 16px", fontSize: 10, color: "#94a3b8" }}>
-        AI results may be inaccurate - Always verify against official datasheets before ordering
-      </div>
+      <div style={{ textAlign: "center", padding: "4px 16px", fontSize: 10, color: "#94a3b8" }}>AI results may be inaccurate - Always verify against official datasheets before ordering</div>
 
       {/* Input */}
       <div style={{ padding: "12px 20px 16px", background: "#fff", borderTop: "1px solid #e2e8f0", maxWidth: 820, width: "100%", margin: "0 auto", boxSizing: "border-box", flexShrink: 0 }}>
@@ -1019,7 +1171,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>Shift+Enter for new line - upload BOM with BOM</div>
+        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>Shift+Enter for new line - click BOM to upload</div>
       </div>
     </div>
   );
