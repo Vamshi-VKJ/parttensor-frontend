@@ -38,12 +38,7 @@ async function signInWithOTP(email) {
   return await supaFetch("/auth/v1/otp", "POST", {
     email: email,
     create_user: true,
-    gotrue_meta_security: {},
-    options: {
-      shouldCreateUser: true,
-      emailRedirectTo: null,
-      channel: "email"
-    }
+    gotrue_meta_security: {}
   });
 }
 async function verifyOTP(email, token) {
@@ -654,6 +649,31 @@ export default function App() {
   var inputRef = useRef(null);
   var fileInputRef = useRef(null);
   var retryRef = useRef(0);
+
+  // Handle Supabase auth callback from email magic link
+  useEffect(function() {
+    var hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      var params = new URLSearchParams(hash.substring(1));
+      var accessToken = params.get("access_token");
+      var expiresAt = params.get("expires_at");
+      if (accessToken) {
+        var authData = {
+          access_token: accessToken,
+          refresh_token: params.get("refresh_token") || "",
+          expires_at: parseInt(expiresAt) || Math.floor(Date.now() / 1000) + 3600,
+        };
+        supaFetch("/auth/v1/user", "GET", null, accessToken).then(function(res) {
+          if (res.ok && res.data) {
+            authData.user = res.data;
+            localStorage.setItem("pt_auth", JSON.stringify(authData));
+            setAuth(authData);
+            window.history.replaceState({}, document.title, "/");
+          }
+        });
+      }
+    }
+  }, []);
 
   // Load auth on mount
   useEffect(function() {
