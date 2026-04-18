@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
+const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY"; // Replace with your Razorpay Key ID
 const SUPABASE_URL = "https://pchmgfmrdsnuhijbdgys.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzUwMDUsImV4cCI6MjA5MjAxMTAwNX0.Rta2rut_nxF0nUqwfGYuCm3GwYHUQCY-54KnwgF9rZw";
 
@@ -72,6 +73,85 @@ function trackClick(action, partNumber, manufacturer, query, position, component
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId: SESSION_ID, action: action, partNumber: partNumber || "", manufacturer: manufacturer || "", query: query || "", position: position || null, componentType: componentType || "", requiredVoltage: rv || null, requiredCurrent: rc || null }),
   }).catch(function() {});
+}
+
+// Submit part feedback (good/bad)
+function submitFeedback(partNumber, manufacturer, query, feedback, componentType) {
+  return fetch(BACKEND_URL + "/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      partNumber: partNumber,
+      manufacturer: manufacturer || "",
+      query: query || "",
+      feedback: feedback,
+      sessionId: SESSION_ID,
+      componentType: componentType || "",
+    }),
+  }).catch(function() {});
+}
+
+// Load Razorpay script
+function loadRazorpay() {
+  return new Promise(function(resolve) {
+    if (window.Razorpay) { resolve(true); return; }
+    var script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = function() { resolve(true); };
+    script.onerror = function() { resolve(false); };
+    document.body.appendChild(script);
+  });
+}
+
+// Open Razorpay checkout
+async function openRazorpayCheckout(plan, userId, email, onSuccess) {
+  var loaded = await loadRazorpay();
+  if (!loaded) { alert("Payment gateway failed to load. Please try again."); return; }
+
+  try {
+    var res = await fetch(BACKEND_URL + "/api/create-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: plan, userId: userId, email: email }),
+    });
+    var orderData = await res.json();
+    if (orderData.error) { alert("Could not create order: " + orderData.error); return; }
+
+    var options = {
+      key: RAZORPAY_KEY_ID,
+      amount: orderData.amount,
+      currency: "INR",
+      name: "PartTensor",
+      description: plan === "yearly" ? "Pro Annual - Unlimited messages" : "Pro Monthly - Unlimited messages",
+      order_id: orderData.orderId,
+      prefill: { email: email || "" },
+      theme: { color: "#2563eb" },
+      handler: async function(response) {
+        // Verify payment on backend
+        var verifyRes = await fetch(BACKEND_URL + "/api/verify-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+            userId: userId,
+            plan: plan,
+          }),
+        });
+        var verifyData = await verifyRes.json();
+        if (verifyData.success) {
+          onSuccess && onSuccess(plan);
+        } else {
+          alert("Payment verification failed. Please contact support.");
+        }
+      },
+    };
+    var rzp = new window.Razorpay(options);
+    rzp.open();
+  } catch (e) {
+    alert("Payment error: " + e.message);
+  }
 }
 
 // =============================================
@@ -184,7 +264,7 @@ function AuthModal({ mode, onAuth, onClose }) {
 // =============================================
 // UPGRADE MODAL
 // =============================================
-function UpgradeModal({ onClose, onSignIn }) {
+function UpgradeModal({ onClose, onSignIn, onPay }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
@@ -208,9 +288,15 @@ function UpgradeModal({ onClose, onSignIn }) {
               - Chat history<br/>
               - Priority support
             </div>
-            <button onClick={function() { alert("Payment coming soon! Email us at hello@parttensor.com to get early access."); }} style={{ width: "100%", marginTop: 12, padding: "10px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 14 }}>
-              Get Pro
-            </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={function() { onPay("monthly"); }} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+                Monthly - Rs 99
+              </button>
+              <button onClick={function() { onPay("yearly"); }} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+                Annual - Rs 799
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", marginTop: 6 }}>Annual saves Rs 389/year</div>
           </div>
         </div>
 
@@ -230,6 +316,54 @@ function RiskBadge({ stock }) {
   var total = stock.totalStock || 0;
   var r = total === 0 ? { s: "OUT", c: "#dc2626", bg: "#fef2f2" } : total < 100 ? { s: "HIGH RISK", c: "#dc2626", bg: "#fef2f2" } : total < 500 ? { s: "MED RISK", c: "#d97706", bg: "#fffbeb" } : total < 2000 ? { s: "LOW RISK", c: "#16a34a", bg: "#f0fdf4" } : { s: "SAFE", c: "#16a34a", bg: "#f0fdf4" };
   return <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, fontWeight: 700, background: r.bg, color: r.c, border: "1px solid " + r.c + "33", whiteSpace: "nowrap" }}>{r.s}</span>;
+}
+
+
+// =============================================
+// PART FEEDBACK COMPONENT
+// =============================================
+function PartFeedback({ partNumber, manufacturer, query, componentType }) {
+  var [voted, setVoted] = useState(null);
+  var [submitting, setSubmitting] = useState(false);
+
+  async function handleFeedback(feedback) {
+    if (voted || submitting) return;
+    setSubmitting(true);
+    await submitFeedback(partNumber, manufacturer, query, feedback, componentType);
+    setVoted(feedback);
+    setSubmitting(false);
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+      <span style={{ fontSize: 11, color: "#94a3b8" }}>Was this helpful?</span>
+      <button
+        onClick={function(e) { e.stopPropagation(); handleFeedback("good"); }}
+        disabled={!!voted || submitting}
+        style={{
+          padding: "3px 10px", borderRadius: 99, border: "1px solid " + (voted === "good" ? "#16a34a" : "#e2e8f0"),
+          background: voted === "good" ? "#f0fdf4" : "#fff",
+          color: voted === "good" ? "#16a34a" : "#64748b",
+          fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600,
+          transition: "all 0.15s",
+        }}>
+        {voted === "good" ? "Helpful" : "Yes"}
+      </button>
+      <button
+        onClick={function(e) { e.stopPropagation(); handleFeedback("bad"); }}
+        disabled={!!voted || submitting}
+        style={{
+          padding: "3px 10px", borderRadius: 99, border: "1px solid " + (voted === "bad" ? "#dc2626" : "#e2e8f0"),
+          background: voted === "bad" ? "#fef2f2" : "#fff",
+          color: voted === "bad" ? "#dc2626" : "#64748b",
+          fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600,
+          transition: "all 0.15s",
+        }}>
+        {voted === "bad" ? "Not helpful" : "No"}
+      </button>
+      {voted && <span style={{ fontSize: 11, color: "#94a3b8" }}>Thanks!</span>}
+    </div>
+  );
 }
 
 function PartCard({ part, stock, isAlt, rank, msg, idx }) {
@@ -267,6 +401,7 @@ function PartCard({ part, stock, isAlt, rank, msg, idx }) {
       </div>
       {part.aeComment && <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.6, marginTop: 8, padding: "7px 10px", background: "#f8fafc", borderRadius: 7, borderLeft: "3px solid #2563eb" }}>{part.aeComment}</div>}
       {part.caution && <div style={{ fontSize: 11, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 9px", marginTop: 6 }}>Caution: {part.caution}</div>}
+      <PartFeedback partNumber={part.partNumber} manufacturer={part.manufacturer} query={query} componentType={ct} />
       <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {total !== null && <span style={{ fontSize: 11, fontWeight: 700, color: total > 0 ? "#16a34a" : "#dc2626" }}>{total > 0 ? total.toLocaleString() + " units" : "Out of Stock"}</span>}
         {stock && stock.bestPrice && <span style={{ fontSize: 11, color: "#0f172a", fontWeight: 600, background: "#f0fdf4", padding: "2px 8px", borderRadius: 99, border: "1px solid #86efac" }}>{stock.bestPrice} @ {stock.bestPriceSource}</span>}
@@ -490,6 +625,7 @@ export default function App() {
   var [authMode, setAuthMode] = useState("default");
   var [guestCount, setGuestCount] = useState(0);
   var [dailyCount, setDailyCount] = useState(0);
+  var [userPlan, setUserPlan] = useState("free");
   var bottomRef = useRef(null);
   var inputRef = useRef(null);
   var fileInputRef = useRef(null);
@@ -510,6 +646,11 @@ export default function App() {
     }
     var usage = getGuestUsage();
     setGuestCount(usage.count || 0);
+    // Load plan from localStorage
+    try {
+      var savedPlan = JSON.parse(localStorage.getItem("pt_plan") || "{}");
+      if (savedPlan.plan === "paid") setUserPlan("paid");
+    } catch (e) {}
   }, []);
 
   useEffect(function() {
@@ -580,6 +721,19 @@ export default function App() {
     return true;
   }
 
+  // Handle Razorpay payment
+  async function handlePayment(plan) {
+    var user = auth ? (auth.user || auth) : null;
+    if (!user) { setShowUpgrade(false); setShowAuth(true); return; }
+    setShowUpgrade(false);
+    await openRazorpayCheckout(plan, user.id, user.email, async function(paidPlan) {
+      setUserPlan("paid");
+      // Store plan in localStorage
+      localStorage.setItem("pt_plan", JSON.stringify({ plan: "paid", userId: user.id, updatedAt: Date.now() }));
+      alert("Payment successful! You now have unlimited access to PartTensor.");
+    });
+  }
+
   async function sendMessage(text) {
     var q = (text || input).trim();
     if (!q) return;
@@ -626,7 +780,7 @@ export default function App() {
           history: history,
           sessionId: SESSION_ID,
           userId: auth ? (auth.user && auth.user.id || auth.id) : null,
-          plan: auth ? "free" : "guest",
+          plan: userPlan === "paid" ? "paid" : auth ? "free" : "guest",
         }),
       });
 
@@ -743,7 +897,7 @@ export default function App() {
       `}</style>
 
       {showAuth && <AuthModal mode={authMode} onAuth={handleAuth} onClose={function() { setShowAuth(false); setAuthMode("default"); }} />}
-      {showUpgrade && <UpgradeModal onClose={function() { setShowUpgrade(false); }} onSignIn={function() { setShowUpgrade(false); setShowAuth(true); }} />}
+      {showUpgrade && <UpgradeModal onClose={function() { setShowUpgrade(false); }} onSignIn={function() { setShowUpgrade(false); setShowAuth(true); }} onPay={handlePayment} />}
 
       {auth && (
         <Sidebar
