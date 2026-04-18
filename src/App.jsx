@@ -38,7 +38,12 @@ async function signInWithOTP(email) {
   return await supaFetch("/auth/v1/otp", "POST", {
     email: email,
     create_user: true,
-    gotrue_meta_security: {}
+    gotrue_meta_security: {},
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: null,
+      channel: "email"
+    }
   });
 }
 async function verifyOTP(email, token) {
