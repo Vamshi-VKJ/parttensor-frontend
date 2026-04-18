@@ -330,9 +330,10 @@ function AuthModal({ mode, onAuth, onClose }) {
     setError("Password reset email sent! Check your inbox.");
   }
 
-  function handleGoogleLogin() {
-    window.location.href = getGoogleAuthURL();
-  }
+  function getGoogleAuthURL() {
+  return SUPABASE_URL + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent("https://www.parttensor.com");
+}
+
 
   var inputStyle = { width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid #e2e8f0", fontSize: 14, outline: "none", color: "#0f172a", background: "#f8fafc", fontFamily: "inherit" };
   var btnStyle = { width: "100%", padding: "12px", borderRadius: 10, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
