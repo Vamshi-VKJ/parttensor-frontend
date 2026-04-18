@@ -83,7 +83,7 @@ async function checkUserExists(email) {
 }
 
 function getGoogleAuthURL() {
-  return SUPABASE_URL + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(window.location.origin);
+  return SUPABASE_URL + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent("https://www.parttensor.com");
 }
 
 async function signOut(accessToken) {
