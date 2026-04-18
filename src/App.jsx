@@ -2,11 +2,11 @@ import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
 const SUPABASE_URL = "https://pchmgfmrdsnuhijbdgys.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5NzM0NjQsImV4cCI6MjA2MDU0OTQ2NH0";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5NzM0NjQsImV4cCI6MjA2MDU0OTQ2NH0.your-key-here";
 const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY";
 
-var GUEST_LIMIT = 10;
-var FREE_LIMIT = 50;
+var GUEST_LIMIT = 5;
+var FREE_LIMIT = 20;
 
 // =============================================
 // SUPABASE CLIENT
@@ -145,7 +145,7 @@ async function openRazorpayCheckout(plan, userId, email, onSuccess) {
     var res = await fetch(BACKEND_URL + "/api/create-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: plan, userId: userId, email: email }),
+      body: JSON.stringify({ planKey: planKey, userId: userId, email: email }),
     });
     var orderData = await res.json();
     if (orderData.error) { alert("Could not create order: " + orderData.error); return; }
@@ -162,7 +162,7 @@ async function openRazorpayCheckout(plan, userId, email, onSuccess) {
         var verifyRes = await fetch(BACKEND_URL + "/api/verify-payment", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature, userId: userId, plan: plan }),
+          body: JSON.stringify({ razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature, userId: userId, planKey: planKey }),
         });
         var verifyData = await verifyRes.json();
         if (verifyData.success) { onSuccess && onSuccess(plan); }
@@ -357,7 +357,7 @@ function AuthModal({ mode, onAuth, onClose }) {
         {/* Limit warning */}
         {mode === "limit" && (
           <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 20, fontSize: 13, color: "#92400e" }}>
-            You have used your {GUEST_LIMIT} free messages today. Sign in for {FREE_LIMIT}/day free.
+            You have used your {GUEST_LIMIT} free messages today. Sign in for {FREE_LIMIT}/day free, or upgrade for unlimited.
           </div>
         )}
 
@@ -486,49 +486,107 @@ function AuthModal({ mode, onAuth, onClose }) {
 // UPGRADE MODAL
 // =============================================
 function UpgradeModal({ onClose, onSignIn, onPay }) {
+  var [billing, setBilling] = useState("monthly");
+  var prices = {
+    pro:  { monthly: "Rs 199", yearly: "Rs 1,799", monthlyKey: "pro_monthly", yearlyKey: "pro_yearly", save: "Save 25%" },
+    team: { monthly: "Rs 999", yearly: "Rs 8,999", monthlyKey: "team_monthly", yearlyKey: "team_yearly", save: "Save 25%" },
+  };
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a" }}>Upgrade to Pro</div>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto" }}>
+      <div style={{ background: "#fff", borderRadius: 20, padding: 28, width: "100%", maxWidth: 560, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a" }}>Upgrade PartTensor</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer" }}>x</button>
         </div>
-        <div style={{ fontSize: 14, color: "#64748b", marginBottom: 24 }}>You have reached your daily limit. Upgrade for unlimited access.</div>
-        <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
-          <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #e2e8f0", textAlign: "center" }}>
-            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Monthly</div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 99</div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>per month</div>
-            <button onClick={function() { onPay("monthly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Get Monthly</button>
+        <div style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>You have reached your daily limit. Upgrade for unlimited access.</div>
+
+        {/* Billing toggle */}
+        <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 10, padding: 4, marginBottom: 20, width: "fit-content" }}>
+          <button onClick={function() { setBilling("monthly"); }} style={{ padding: "7px 20px", borderRadius: 8, background: billing === "monthly" ? "#fff" : "none", border: "none", fontWeight: billing === "monthly" ? 700 : 500, color: billing === "monthly" ? "#0f172a" : "#64748b", cursor: "pointer", fontSize: 13 }}>Monthly</button>
+          <button onClick={function() { setBilling("yearly"); }} style={{ padding: "7px 20px", borderRadius: 8, background: billing === "yearly" ? "#fff" : "none", border: "none", fontWeight: billing === "yearly" ? 700 : 500, color: billing === "yearly" ? "#0f172a" : "#64748b", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+            Annual <span style={{ fontSize: 10, background: "#dcfce7", color: "#16a34a", padding: "2px 6px", borderRadius: 99, fontWeight: 700 }}>Save 25%</span>
+          </button>
+        </div>
+
+        {/* Plan cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+
+          {/* Free */}
+          <div style={{ padding: "16px", borderRadius: 12, border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#64748b", marginBottom: 4 }}>Free</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 2 }}>Rs 0</div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 14 }}>forever</div>
+            <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.7 }}>
+              <div>5 searches/day (guest)</div>
+              <div>20 searches/day (account)</div>
+              <div>Part search + stock</div>
+              <div style={{ color: "#94a3b8" }}>No BOM generation</div>
+              <div style={{ color: "#94a3b8" }}>No Excel upload</div>
+            </div>
           </div>
-          <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #7c3aed", background: "#faf5ff", textAlign: "center", position: "relative" }}>
-            <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#7c3aed", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99, whiteSpace: "nowrap" }}>BEST VALUE</div>
-            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Annual</div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 799</div>
-            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>Rs 66/month</div>
-            <button onClick={function() { onPay("yearly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>Get Annual</button>
+
+          {/* Pro */}
+          <div style={{ padding: "16px", borderRadius: 12, border: "2px solid #2563eb", background: "#eff6ff", position: "relative" }}>
+            <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#2563eb", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99, whiteSpace: "nowrap" }}>MOST POPULAR</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", marginBottom: 4 }}>Pro Individual</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 2 }}>{billing === "monthly" ? prices.pro.monthly : prices.pro.yearly}</div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 14 }}>per {billing === "monthly" ? "month" : "year"}</div>
+            <div style={{ fontSize: 12, color: "#1e40af", lineHeight: 1.7, marginBottom: 14 }}>
+              <div>Unlimited searches</div>
+              <div>BOM generation</div>
+              <div>Excel BOM upload</div>
+              <div>Chat history</div>
+              <div>Priority support</div>
+            </div>
+            <button onClick={function() { onPay(billing === "monthly" ? prices.pro.monthlyKey : prices.pro.yearlyKey); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+              Get Pro
+            </button>
+          </div>
+
+          {/* Team */}
+          <div style={{ padding: "16px", borderRadius: 12, border: "2px solid #7c3aed", background: "#faf5ff", position: "relative" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#7c3aed", marginBottom: 4 }}>Pro Team</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 2 }}>{billing === "monthly" ? prices.team.monthly : prices.team.yearly}</div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 14 }}>per {billing === "monthly" ? "month" : "year"}</div>
+            <div style={{ fontSize: 12, color: "#581c87", lineHeight: 1.7, marginBottom: 14 }}>
+              <div>Everything in Pro</div>
+              <div>5 seats included</div>
+              <div>Team BOM library</div>
+              <div>Admin dashboard</div>
+              <div>Priority support</div>
+            </div>
+            <button onClick={function() { onPay(billing === "monthly" ? prices.team.monthlyKey : prices.team.yearlyKey); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+              Get Team
+            </button>
+          </div>
+
+          {/* Enterprise */}
+          <div style={{ padding: "16px", borderRadius: 12, border: "1px solid #e2e8f0", background: "#0f172a" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#60a5fa", marginBottom: 4 }}>Enterprise</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 2 }}>Custom</div>
+            <div style={{ fontSize: 11, color: "#475569", marginBottom: 14 }}>contact us</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.7, marginBottom: 14 }}>
+              <div>Unlimited seats</div>
+              <div>REST API access</div>
+              <div>Custom integrations</div>
+              <div>Dedicated support</div>
+              <div>SLA guarantee</div>
+            </div>
+            <button onClick={function() { window.open("mailto:hello@parttensor.com?subject=Enterprise Plan Inquiry", "_blank"); onClose(); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "#1e293b", color: "#60a5fa", border: "1px solid #334155", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+              Contact Us
+            </button>
           </div>
         </div>
-        <div style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: 10, fontSize: 13, color: "#475569", marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6, color: "#0f172a" }}>Pro includes:</div>
-          <div>Unlimited messages/day</div>
-          <div>Full BOM generation and download</div>
-          <div>Excel BOM upload with alternatives</div>
-          <div>Chat history across sessions</div>
-          <div>Priority support</div>
-        </div>
+
         <div style={{ textAlign: "center", fontSize: 13, color: "#94a3b8" }}>
           Not ready?
-          <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 4, fontSize: 13 }}>Sign in for {FREE_LIMIT} free/day</button>
+          <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 4, fontSize: 13 }}>Sign in for 20 free/day</button>
         </div>
       </div>
     </div>
   );
 }
 
-// =============================================
-// PART FEEDBACK
-// =============================================
 function PartFeedback({ partNumber, manufacturer, query, componentType }) {
   var [voted, setVoted] = useState(null);
   var [submitting, setSubmitting] = useState(false);
@@ -929,14 +987,15 @@ export default function App() {
     return true;
   }
 
-  async function handlePayment(plan) {
+  async function handlePayment(planKey) {
     var user = auth ? (auth.user || auth) : null;
     if (!user) { setShowUpgrade(false); setShowAuth(true); return; }
     setShowUpgrade(false);
-    await openRazorpayCheckout(plan, user.id, user.email, function() {
-      setUserPlan("paid");
-      localStorage.setItem("pt_plan", JSON.stringify({ plan: "paid", userId: user.id, updatedAt: Date.now() }));
-      alert("Payment successful! You now have unlimited access.");
+    var planName = planKey && planKey.startsWith("team") ? "team" : "pro";
+    await openRazorpayCheckout(planKey, user.id, user.email, function() {
+      setUserPlan(planName);
+      localStorage.setItem("pt_plan", JSON.stringify({ plan: planName, userId: user.id, updatedAt: Date.now() }));
+      alert("Payment successful! You now have unlimited access to PartTensor.");
     });
   }
 
@@ -1106,10 +1165,12 @@ export default function App() {
             </div>
           )}
           {auth && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user && user.email}</div>}
-          {userPlan === "paid" && <div style={{ fontSize: 11, color: "#7c3aed", background: "#faf5ff", padding: "3px 10px", borderRadius: 99, fontWeight: 700, border: "1px solid #e9d5ff" }}>PRO</div>}
+          {(userPlan === "pro" || userPlan === "paid") && <div style={{ fontSize: 11, color: "#2563eb", background: "#eff6ff", padding: "3px 10px", borderRadius: 99, fontWeight: 700, border: "1px solid #bfdbfe" }}>PRO</div>}
+          {userPlan === "team" && <div style={{ fontSize: 11, color: "#7c3aed", background: "#faf5ff", padding: "3px 10px", borderRadius: 99, fontWeight: 700, border: "1px solid #e9d5ff" }}>TEAM</div>}
+          {userPlan === "enterprise" && <div style={{ fontSize: 11, color: "#fff", background: "#0f172a", padding: "3px 10px", borderRadius: 99, fontWeight: 700 }}>ENT</div>}
           {!auth ? (
             <button onClick={function() { setAuthMode("default"); setShowAuth(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Sign In</button>
-          ) : userPlan !== "paid" ? (
+          ) : (userPlan === "free" || userPlan === "guest" || !userPlan) ? (
             <button onClick={function() { setShowUpgrade(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Upgrade</button>
           ) : null}
         </div>
