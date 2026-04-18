@@ -34,12 +34,21 @@ async function supaFetch(path, method, body, token) {
 }
 
 async function signInWithOTP(email) {
-  return await supaFetch("/auth/v1/otp", "POST", { email, create_user: true });
+  return await supaFetch("/auth/v1/otp", "POST", {
+    email: email,
+    create_user: true,
+    gotrue_meta_security: {},
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: null,
+      data: {}
+    }
+  });
 }
 async function verifyOTP(email, token) {
-  return await supaFetch("/auth/v1/verify", "POST", { 
-    email: email, 
-    token: token, 
+  return await supaFetch("/auth/v1/verify", "POST", {
+    email: email,
+    token: token,
     type: "email",
     gotrue_meta_security: {}
   });
