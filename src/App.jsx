@@ -37,7 +37,12 @@ async function signInWithOTP(email) {
   return await supaFetch("/auth/v1/otp", "POST", { email, create_user: true });
 }
 async function verifyOTP(email, token) {
-  return await supaFetch("/auth/v1/verify", "POST", { email, token, type: "email" });
+  return await supaFetch("/auth/v1/verify", "POST", { 
+    email: email, 
+    token: token, 
+    type: "email",
+    gotrue_meta_security: {}
+  });
 }
 async function signOut(accessToken) {
   return await supaFetch("/auth/v1/logout", "POST", null, accessToken);
