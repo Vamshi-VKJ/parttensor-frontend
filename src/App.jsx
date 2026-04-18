@@ -34,15 +34,12 @@ async function supaFetch(path, method, body, token) {
 }
 
 async function signInWithOTP(email) {
-  return await supaFetch("/auth/v1/otp", "POST", {
+  return await supaFetch("/auth/v1/magiclink", "POST", {
     email: email,
     create_user: true,
-    gotrue_meta_security: {},
     options: {
-      shouldCreateUser: true,
-      emailRedirectTo: null,
-      data: {}
-    }
+      emailRedirectTo: "https://parttensor.com",
+    },
   });
 }
 async function verifyOTP(email, token) {
