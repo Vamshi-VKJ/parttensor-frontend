@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
 const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY"; // Replace with your Razorpay Key ID
-const SUPABASE_URL = "https://pchmgfmrdsnuhijbdgys.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzUwMDUsImV4cCI6MjA5MjAxMTAwNX0.Rta2rut_nxF0nUqwfGYuCm3GwYHUQCY-54KnwgF9rZw";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || "";
 
 // =============================================
 // LIMITS
@@ -20,6 +20,7 @@ async function supaFetch(path, method, body, token) {
       "Content-Type": "application/json",
       "apikey": SUPABASE_KEY,
       "Authorization": "Bearer " + (token || SUPABASE_KEY),
+      "x-client-info": "parttensor/1.0",
     };
     if (method !== "GET") headers["Prefer"] = "return=representation";
     var res = await fetch(SUPABASE_URL + path, {
@@ -34,12 +35,10 @@ async function supaFetch(path, method, body, token) {
 }
 
 async function signInWithOTP(email) {
-  return await supaFetch("/auth/v1/magiclink", "POST", {
+  return await supaFetch("/auth/v1/otp", "POST", {
     email: email,
     create_user: true,
-    options: {
-      emailRedirectTo: "https://parttensor.com",
-    },
+    gotrue_meta_security: {}
   });
 }
 async function verifyOTP(email, token) {
@@ -200,10 +199,19 @@ function AuthModal({ mode, onAuth, onClose }) {
     setLoading(true); setError("");
     var res = await signInWithOTP(email);
     setLoading(false);
+    console.log("OTP response:", res.status, JSON.stringify(res.data));
     if (res.ok || res.status === 200 || res.status === 201) {
       setStep("otp");
     } else {
-      setError("Could not send OTP. Please try again.");
+      var errMsg = "Could not send OTP (status " + res.status + ")";
+      if (res.data) {
+        if (res.data.msg) errMsg = res.data.msg;
+        else if (res.data.message) errMsg = res.data.message;
+        else if (res.data.error_description) errMsg = res.data.error_description;
+        else if (res.data.error) errMsg = res.data.error;
+        else errMsg = JSON.stringify(res.data).substring(0, 100);
+      }
+      setError(errMsg);
     }
   }
 
