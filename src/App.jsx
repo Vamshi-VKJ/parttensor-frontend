@@ -1,13 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
-const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY"; // Replace with your Razorpay Key ID
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY || "";
+const SUPABASE_URL = "";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzUwMDUsImV4cCI6MjA5MjAxMTAwNX0.Rta2rut_nxF0nUqwfGYuCm3GwYHUQCY-54KnwgF9rZw";
+const RAZORPAY_KEY_ID = "rzp_test_Setn6mVGbRbeKx";
 
-// =============================================
-// LIMITS
-// =============================================
 var GUEST_LIMIT = 10;
 var FREE_LIMIT = 50;
 
@@ -31,7 +28,7 @@ async function supaFetch(path, method, body, token) {
     var text = await res.text();
     try { return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : null }; }
     catch (e) { return { ok: res.ok, status: res.status, data: text }; }
-  } catch (e) { return { ok: false, data: null }; }
+  } catch (e) { return { ok: false, status: 0, data: null }; }
 }
 
 async function signInWithOTP(email) {
@@ -41,6 +38,7 @@ async function signInWithOTP(email) {
     gotrue_meta_security: {}
   });
 }
+
 async function verifyOTP(email, token) {
   return await supaFetch("/auth/v1/verify", "POST", {
     email: email,
@@ -49,6 +47,17 @@ async function verifyOTP(email, token) {
     gotrue_meta_security: {}
   });
 }
+
+async function signInWithGoogle() {
+  var redirectTo = window.location.origin;
+  var res = await supaFetch("/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(redirectTo), "GET");
+  return res;
+}
+
+function getGoogleAuthURL() {
+  return SUPABASE_URL + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(window.location.origin);
+}
+
 async function signOut(accessToken) {
   return await supaFetch("/auth/v1/logout", "POST", null, accessToken);
 }
@@ -72,9 +81,6 @@ async function getMessages(sessionId, accessToken) {
   return await supaFetch("/rest/v1/chat_messages?session_id=eq." + sessionId + "&order=created_at.asc", "GET", null, accessToken);
 }
 
-// =============================================
-// TRACKING
-// =============================================
 var SESSION_ID = "s_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now();
 
 function trackClick(action, partNumber, manufacturer, query, position, componentType, rv, rc) {
@@ -85,23 +91,14 @@ function trackClick(action, partNumber, manufacturer, query, position, component
   }).catch(function() {});
 }
 
-// Submit part feedback (good/bad)
 function submitFeedback(partNumber, manufacturer, query, feedback, componentType) {
   return fetch(BACKEND_URL + "/api/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      partNumber: partNumber,
-      manufacturer: manufacturer || "",
-      query: query || "",
-      feedback: feedback,
-      sessionId: SESSION_ID,
-      componentType: componentType || "",
-    }),
+    body: JSON.stringify({ partNumber: partNumber, manufacturer: manufacturer || "", query: query || "", feedback: feedback, sessionId: SESSION_ID, componentType: componentType || "" }),
   }).catch(function() {});
 }
 
-// Load Razorpay script
 function loadRazorpay() {
   return new Promise(function(resolve) {
     if (window.Razorpay) { resolve(true); return; }
@@ -113,11 +110,9 @@ function loadRazorpay() {
   });
 }
 
-// Open Razorpay checkout
 async function openRazorpayCheckout(plan, userId, email, onSuccess) {
   var loaded = await loadRazorpay();
   if (!loaded) { alert("Payment gateway failed to load. Please try again."); return; }
-
   try {
     var res = await fetch(BACKEND_URL + "/api/create-order", {
       method: "POST",
@@ -126,42 +121,46 @@ async function openRazorpayCheckout(plan, userId, email, onSuccess) {
     });
     var orderData = await res.json();
     if (orderData.error) { alert("Could not create order: " + orderData.error); return; }
-
     var options = {
       key: RAZORPAY_KEY_ID,
       amount: orderData.amount,
       currency: "INR",
       name: "PartTensor",
-      description: plan === "yearly" ? "Pro Annual - Unlimited messages" : "Pro Monthly - Unlimited messages",
+      description: plan === "yearly" ? "Pro Annual - Unlimited" : "Pro Monthly - Unlimited",
       order_id: orderData.orderId,
       prefill: { email: email || "" },
       theme: { color: "#2563eb" },
       handler: async function(response) {
-        // Verify payment on backend
         var verifyRes = await fetch(BACKEND_URL + "/api/verify-payment", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_signature: response.razorpay_signature,
-            userId: userId,
-            plan: plan,
-          }),
+          body: JSON.stringify({ razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature, userId: userId, plan: plan }),
         });
         var verifyData = await verifyRes.json();
-        if (verifyData.success) {
-          onSuccess && onSuccess(plan);
-        } else {
-          alert("Payment verification failed. Please contact support.");
-        }
+        if (verifyData.success) { onSuccess && onSuccess(plan); }
+        else { alert("Payment verification failed. Please contact support."); }
       },
     };
     var rzp = new window.Razorpay(options);
     rzp.open();
-  } catch (e) {
-    alert("Payment error: " + e.message);
-  }
+  } catch (e) { alert("Payment error: " + e.message); }
+}
+
+function getGuestUsage() {
+  try {
+    var data = JSON.parse(localStorage.getItem("pt_usage") || "{}");
+    var today = new Date().toDateString();
+    if (data.date !== today) return { count: 0, date: today };
+    return data;
+  } catch (e) { return { count: 0, date: new Date().toDateString() }; }
+}
+
+function incrementGuestUsage() {
+  var usage = getGuestUsage();
+  usage.count = (usage.count || 0) + 1;
+  usage.date = new Date().toDateString();
+  localStorage.setItem("pt_usage", JSON.stringify(usage));
+  return usage.count;
 }
 
 // =============================================
@@ -184,7 +183,7 @@ function PTLogo({ size }) {
 }
 
 // =============================================
-// AUTH MODAL
+// AUTH MODAL - Email OTP + Google
 // =============================================
 function AuthModal({ mode, onAuth, onClose }) {
   var [email, setEmail] = useState("");
@@ -203,13 +202,13 @@ function AuthModal({ mode, onAuth, onClose }) {
     if (res.ok || res.status === 200 || res.status === 201) {
       setStep("otp");
     } else {
-      var errMsg = "Could not send OTP (status " + res.status + ")";
+      var errMsg = "Could not send OTP";
       if (res.data) {
         if (res.data.msg) errMsg = res.data.msg;
         else if (res.data.message) errMsg = res.data.message;
         else if (res.data.error_description) errMsg = res.data.error_description;
         else if (res.data.error) errMsg = res.data.error;
-        else errMsg = JSON.stringify(res.data).substring(0, 100);
+        else errMsg = "Error " + res.status + ": " + JSON.stringify(res.data).substring(0, 80);
       }
       setError(errMsg);
     }
@@ -221,11 +220,19 @@ function AuthModal({ mode, onAuth, onClose }) {
     setLoading(true); setError("");
     var res = await verifyOTP(email, otp);
     setLoading(false);
+    console.log("Verify response:", res.status, JSON.stringify(res.data));
     if (res.ok && res.data && res.data.access_token) {
       onAuth(res.data);
     } else {
-      setError("Invalid or expired OTP. Please try again.");
+      var errMsg = "Invalid or expired code";
+      if (res.data && res.data.msg) errMsg = res.data.msg;
+      else if (res.data && res.data.message) errMsg = res.data.message;
+      setError(errMsg);
     }
+  }
+
+  function handleGoogleLogin() {
+    window.location.href = getGoogleAuthURL();
   }
 
   return (
@@ -239,39 +246,62 @@ function AuthModal({ mode, onAuth, onClose }) {
               <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, letterSpacing: 1 }}>HARDWARE AI</div>
             </div>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>x</button>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer", lineHeight: 1 }}>x</button>
         </div>
 
-        {mode === "limit" && step === "email" && (
+        {mode === "limit" && (
           <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 20, fontSize: 13, color: "#92400e" }}>
-            You have used your 10 free messages today. Sign in for 50 messages/day free, or upgrade for unlimited.
+            You have used your {GUEST_LIMIT} free messages today. Sign in for {FREE_LIMIT} messages/day free.
           </div>
         )}
 
         {step === "email" ? (
-          <form onSubmit={handleSendOTP}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Email address</label>
-              <input type="email" value={email} onChange={function(e) { setEmail(e.target.value); setError(""); }} placeholder="you@company.com" autoFocus style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 14, outline: "none", color: "#0f172a" }} />
-            </div>
-            {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12 }}>{error}</div>}
-            <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 10, background: loading ? "#94a3b8" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-              {loading ? "Sending..." : "Send OTP Code"}
+          <div>
+            {/* Google Login */}
+            <button onClick={handleGoogleLogin} style={{ width: "100%", padding: "12px", borderRadius: 10, background: "#fff", border: "1.5px solid #e2e8f0", color: "#0f172a", fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16 }}>
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+              Continue with Google
             </button>
-            <div style={{ marginTop: 14, fontSize: 12, color: "#94a3b8", textAlign: "center" }}>No password needed. We email you a one-time code.</div>
-          </form>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>or use email</span>
+              <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+            </div>
+
+            <form onSubmit={handleSendOTP}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Email address</label>
+                <input type="email" value={email} onChange={function(e) { setEmail(e.target.value); setError(""); }} placeholder="you@company.com" autoFocus style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 14, outline: "none", color: "#0f172a" }} />
+              </div>
+              {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
+              <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 10, background: loading ? "#94a3b8" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
+                {loading ? "Sending..." : "Send OTP Code"}
+              </button>
+              <div style={{ marginTop: 12, fontSize: 12, color: "#94a3b8", textAlign: "center" }}>No password needed. We send a 6-digit code to your email.</div>
+            </form>
+          </div>
         ) : (
           <form onSubmit={handleVerifyOTP}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Enter OTP sent to {email}</label>
-              <input type="text" value={otp} onChange={function(e) { setOtp(e.target.value.replace(/[^0-9]/g, "")); setError(""); }} placeholder="123456" maxLength={6} autoFocus style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 24, fontWeight: 700, letterSpacing: 8, outline: "none", color: "#0f172a", textAlign: "center", fontFamily: "'DM Mono', monospace" }} />
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 14, color: "#64748b" }}>Code sent to</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>{email}</div>
             </div>
-            {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12 }}>{error}</div>}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Enter 6-digit code</label>
+              <input type="text" value={otp} onChange={function(e) { setOtp(e.target.value.replace(/[^0-9]/g, "")); setError(""); }} placeholder="000000" maxLength={6} autoFocus style={{ width: "100%", padding: "14px", borderRadius: 10, border: "1.5px solid " + (error ? "#ef4444" : "#e2e8f0"), fontSize: 28, fontWeight: 800, letterSpacing: 10, outline: "none", color: "#0f172a", textAlign: "center", fontFamily: "'DM Mono', monospace" }} />
+            </div>
+            {error && <div style={{ color: "#ef4444", fontSize: 12, marginBottom: 12, padding: "8px 12px", background: "#fef2f2", borderRadius: 8 }}>{error}</div>}
             <button type="submit" disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 10, background: loading ? "#94a3b8" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}>
-              {loading ? "Verifying..." : "Verify and Sign In"}
+              {loading ? "Verifying..." : "Sign In"}
             </button>
             <button type="button" onClick={function() { setStep("email"); setOtp(""); setError(""); }} style={{ width: "100%", padding: "9px", borderRadius: 10, background: "none", color: "#64748b", border: "none", fontSize: 13, cursor: "pointer", marginTop: 6 }}>
-              Change email
+              Use different email
             </button>
           </form>
         )}
@@ -287,40 +317,43 @@ function UpgradeModal({ onClose, onSignIn, onPay }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: "#fff", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
-        <button onClick={onClose} style={{ float: "right", background: "none", border: "none", fontSize: 20, color: "#94a3b8", cursor: "pointer" }}>x</button>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>Pro</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>You have reached your daily limit</div>
-          <div style={{ fontSize: 14, color: "#64748b" }}>Upgrade for unlimited access to PartTensor</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a" }}>Upgrade to Pro</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, color: "#94a3b8", cursor: "pointer" }}>x</button>
         </div>
+        <div style={{ fontSize: 14, color: "#64748b", marginBottom: 24 }}>You have reached your daily limit. Upgrade for unlimited access.</div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
-          <div style={{ padding: "16px 20px", borderRadius: 12, border: "2px solid #2563eb", background: "#eff6ff" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontWeight: 700, color: "#1d4ed8", fontSize: 16 }}>Pro</div>
-              <div style={{ fontWeight: 800, color: "#0f172a", fontSize: 20 }}>$29<span style={{ fontSize: 12, fontWeight: 500, color: "#64748b" }}>/month</span></div>
-            </div>
-            <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.6 }}>
-              - Unlimited messages<br/>
-              - Full BOM generation<br/>
-              - Excel BOM upload<br/>
-              - Chat history<br/>
-              - Priority support
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button onClick={function() { onPay("monthly"); }} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-                Monthly - Rs 99
-              </button>
-              <button onClick={function() { onPay("yearly"); }} style={{ flex: 1, padding: "10px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
-                Annual - Rs 799
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", marginTop: 6 }}>Annual saves Rs 389/year</div>
+        <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+          <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #e2e8f0", textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Monthly</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 99</div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>per month</div>
+            <button onClick={function() { onPay("monthly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+              Get Monthly
+            </button>
+          </div>
+          <div style={{ flex: 1, padding: "20px 16px", borderRadius: 14, border: "2px solid #7c3aed", background: "#faf5ff", textAlign: "center", position: "relative" }}>
+            <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: "#7c3aed", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 99 }}>BEST VALUE</div>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>Annual</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>Rs 799</div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 16 }}>Rs 66/month</div>
+            <button onClick={function() { onPay("yearly"); }} style={{ width: "100%", padding: "9px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+              Get Annual
+            </button>
           </div>
         </div>
 
+        <div style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: 10, fontSize: 13, color: "#475569", marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, color: "#0f172a" }}>Pro includes:</div>
+          <div>Unlimited messages/day</div>
+          <div>Full BOM generation</div>
+          <div>Excel BOM upload</div>
+          <div>Chat history</div>
+          <div>Priority support</div>
+        </div>
+
         <div style={{ textAlign: "center", fontSize: 13, color: "#94a3b8" }}>
-          Not ready? <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Sign in for 50 free messages/day</button>
+          Not ready? <button onClick={onSignIn} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Sign in for {FREE_LIMIT} free/day</button>
         </div>
       </div>
     </div>
@@ -328,18 +361,7 @@ function UpgradeModal({ onClose, onSignIn, onPay }) {
 }
 
 // =============================================
-// PART CARD
-// =============================================
-function RiskBadge({ stock }) {
-  if (!stock) return null;
-  var total = stock.totalStock || 0;
-  var r = total === 0 ? { s: "OUT", c: "#dc2626", bg: "#fef2f2" } : total < 100 ? { s: "HIGH RISK", c: "#dc2626", bg: "#fef2f2" } : total < 500 ? { s: "MED RISK", c: "#d97706", bg: "#fffbeb" } : total < 2000 ? { s: "LOW RISK", c: "#16a34a", bg: "#f0fdf4" } : { s: "SAFE", c: "#16a34a", bg: "#f0fdf4" };
-  return <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, fontWeight: 700, background: r.bg, color: r.c, border: "1px solid " + r.c + "33", whiteSpace: "nowrap" }}>{r.s}</span>;
-}
-
-
-// =============================================
-// PART FEEDBACK COMPONENT
+// PART FEEDBACK
 // =============================================
 function PartFeedback({ partNumber, manufacturer, query, componentType }) {
   var [voted, setVoted] = useState(null);
@@ -354,35 +376,27 @@ function PartFeedback({ partNumber, manufacturer, query, componentType }) {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-      <span style={{ fontSize: 11, color: "#94a3b8" }}>Was this helpful?</span>
-      <button
-        onClick={function(e) { e.stopPropagation(); handleFeedback("good"); }}
-        disabled={!!voted || submitting}
-        style={{
-          padding: "3px 10px", borderRadius: 99, border: "1px solid " + (voted === "good" ? "#16a34a" : "#e2e8f0"),
-          background: voted === "good" ? "#f0fdf4" : "#fff",
-          color: voted === "good" ? "#16a34a" : "#64748b",
-          fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600,
-          transition: "all 0.15s",
-        }}>
-        {voted === "good" ? "Helpful" : "Yes"}
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }} onClick={function(e) { e.stopPropagation(); }}>
+      <span style={{ fontSize: 11, color: "#94a3b8" }}>Helpful?</span>
+      <button onClick={function() { handleFeedback("good"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "good" ? "#16a34a" : "#e2e8f0"), background: voted === "good" ? "#f0fdf4" : "#fff", color: voted === "good" ? "#16a34a" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>
+        Yes
       </button>
-      <button
-        onClick={function(e) { e.stopPropagation(); handleFeedback("bad"); }}
-        disabled={!!voted || submitting}
-        style={{
-          padding: "3px 10px", borderRadius: 99, border: "1px solid " + (voted === "bad" ? "#dc2626" : "#e2e8f0"),
-          background: voted === "bad" ? "#fef2f2" : "#fff",
-          color: voted === "bad" ? "#dc2626" : "#64748b",
-          fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600,
-          transition: "all 0.15s",
-        }}>
-        {voted === "bad" ? "Not helpful" : "No"}
+      <button onClick={function() { handleFeedback("bad"); }} disabled={!!voted || submitting} style={{ padding: "2px 10px", borderRadius: 99, border: "1px solid " + (voted === "bad" ? "#dc2626" : "#e2e8f0"), background: voted === "bad" ? "#fef2f2" : "#fff", color: voted === "bad" ? "#dc2626" : "#64748b", fontSize: 12, cursor: voted ? "default" : "pointer", fontWeight: 600 }}>
+        No
       </button>
       {voted && <span style={{ fontSize: 11, color: "#94a3b8" }}>Thanks!</span>}
     </div>
   );
+}
+
+// =============================================
+// PART CARD
+// =============================================
+function RiskBadge({ stock }) {
+  if (!stock) return null;
+  var total = stock.totalStock || 0;
+  var r = total === 0 ? { s: "OUT", c: "#dc2626", bg: "#fef2f2" } : total < 100 ? { s: "HIGH RISK", c: "#dc2626", bg: "#fef2f2" } : total < 500 ? { s: "MED RISK", c: "#d97706", bg: "#fffbeb" } : total < 2000 ? { s: "LOW RISK", c: "#16a34a", bg: "#f0fdf4" } : { s: "SAFE", c: "#16a34a", bg: "#f0fdf4" };
+  return <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 99, fontWeight: 700, background: r.bg, color: r.c, border: "1px solid " + r.c + "33", whiteSpace: "nowrap" }}>{r.s}</span>;
 }
 
 function PartCard({ part, stock, isAlt, rank, msg, idx }) {
@@ -421,7 +435,7 @@ function PartCard({ part, stock, isAlt, rank, msg, idx }) {
       {part.aeComment && <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.6, marginTop: 8, padding: "7px 10px", background: "#f8fafc", borderRadius: 7, borderLeft: "3px solid #2563eb" }}>{part.aeComment}</div>}
       {part.caution && <div style={{ fontSize: 11, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 9px", marginTop: 6 }}>Caution: {part.caution}</div>}
       <PartFeedback partNumber={part.partNumber} manufacturer={part.manufacturer} query={query} componentType={ct} />
-      <div style={{ marginTop: 10, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {total !== null && <span style={{ fontSize: 11, fontWeight: 700, color: total > 0 ? "#16a34a" : "#dc2626" }}>{total > 0 ? total.toLocaleString() + " units" : "Out of Stock"}</span>}
         {stock && stock.bestPrice && <span style={{ fontSize: 11, color: "#0f172a", fontWeight: 600, background: "#f0fdf4", padding: "2px 8px", borderRadius: 99, border: "1px solid #86efac" }}>{stock.bestPrice} @ {stock.bestPriceSource}</span>}
         <div style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
@@ -450,7 +464,7 @@ function BOMTable({ items, stockData, projectName }) {
     var a = document.createElement("a"); a.href = url; a.download = String(projectName || "BOM").replace(/\s+/g, "_") + "_PartTensor.csv"; a.click();
     URL.revokeObjectURL(url);
   }
-  var hasStock = Object.keys(stockData || {}).length > 0;
+  var hasStock = Object.keys(stockData || {}).some(function(k) { return stockData[k] && stockData[k].totalStock !== undefined; });
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -510,9 +524,7 @@ function MessageBubble({ msg }) {
   if (isUser) {
     return (
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16, animation: "fadeUp 0.25s ease" }}>
-        <div style={{ maxWidth: "75%", padding: "11px 16px", borderRadius: "18px 18px 4px 18px", background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", fontSize: 14, lineHeight: 1.6 }}>
-          {msg.content}
-        </div>
+        <div style={{ maxWidth: "75%", padding: "11px 16px", borderRadius: "18px 18px 4px 18px", background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", fontSize: 14, lineHeight: 1.6 }}>{msg.content}</div>
       </div>
     );
   }
@@ -525,7 +537,7 @@ function MessageBubble({ msg }) {
           <div style={{ fontSize: 14, color: "#1e293b", lineHeight: 1.75, marginBottom: d ? 14 : 0 }}>
             {msg.content.split("\n").map(function(line, i) {
               if (line.startsWith("**") && line.endsWith("**")) return <div key={i} style={{ fontWeight: 700, color: "#0f172a", marginTop: 8 }}>{line.slice(2, -2)}</div>;
-              if (line.startsWith("- ")) return <div key={i} style={{ paddingLeft: 12, marginBottom: 2, display: "flex", gap: 8 }}><span style={{ color: "#2563eb" }}>></span><span>{line.slice(2)}</span></div>;
+              if (line.startsWith("- ")) return <div key={i} style={{ paddingLeft: 12, marginBottom: 2, display: "flex", gap: 8 }}><span style={{ color: "#2563eb" }}>{">"}</span><span>{line.slice(2)}</span></div>;
               if (line.trim() === "") return <div key={i} style={{ height: 6 }} />;
               return <div key={i}>{line}</div>;
             })}
@@ -600,26 +612,6 @@ function Sidebar({ sessions, currentSessionId, onSelectSession, onNewChat, onDel
 }
 
 // =============================================
-// USAGE COUNTER
-// =============================================
-function getGuestUsage() {
-  try {
-    var data = JSON.parse(localStorage.getItem("pt_usage") || "{}");
-    var today = new Date().toDateString();
-    if (data.date !== today) return { count: 0, date: today };
-    return data;
-  } catch (e) { return { count: 0, date: new Date().toDateString() }; }
-}
-
-function incrementGuestUsage() {
-  var usage = getGuestUsage();
-  usage.count = (usage.count || 0) + 1;
-  usage.date = new Date().toDateString();
-  localStorage.setItem("pt_usage", JSON.stringify(usage));
-  return usage.count;
-}
-
-// =============================================
 // MAIN APP
 // =============================================
 var SUGGESTIONS = [
@@ -643,14 +635,13 @@ export default function App() {
   var [showUpgrade, setShowUpgrade] = useState(false);
   var [authMode, setAuthMode] = useState("default");
   var [guestCount, setGuestCount] = useState(0);
-  var [dailyCount, setDailyCount] = useState(0);
   var [userPlan, setUserPlan] = useState("free");
   var bottomRef = useRef(null);
   var inputRef = useRef(null);
   var fileInputRef = useRef(null);
   var retryRef = useRef(0);
 
-  // Handle Supabase auth callback from email magic link
+  // Handle Google OAuth callback and magic link callback
   useEffect(function() {
     var hash = window.location.hash;
     if (hash && hash.includes("access_token")) {
@@ -675,7 +666,7 @@ export default function App() {
     }
   }, []);
 
-  // Load auth on mount
+  // Load auth from localStorage
   useEffect(function() {
     var saved = localStorage.getItem("pt_auth");
     if (saved) {
@@ -690,7 +681,6 @@ export default function App() {
     }
     var usage = getGuestUsage();
     setGuestCount(usage.count || 0);
-    // Load plan from localStorage
     try {
       var savedPlan = JSON.parse(localStorage.getItem("pt_plan") || "{}");
       if (savedPlan.plan === "paid") setUserPlan("paid");
@@ -716,7 +706,6 @@ export default function App() {
     setAuth(authData);
     setShowAuth(false);
     setShowUpgrade(false);
-    // Reset guest counter after login
     localStorage.removeItem("pt_usage");
     setGuestCount(0);
   }
@@ -728,6 +717,7 @@ export default function App() {
     setMessages([]);
     setSessions([]);
     setCurrentSessionId(null);
+    setUserPlan("free");
   }
 
   async function handleSelectSession(session) {
@@ -749,15 +739,11 @@ export default function App() {
     setMessages(function(prev) { return [...prev, msg]; });
   }
 
-  // Check if user can send message
   function checkLimit() {
-    if (auth) {
-      // Logged in - check server-side limit (tracked by backend)
-      return true; // backend enforces 50/day for free users
-    }
+    if (userPlan === "paid") return true;
+    if (auth) return true; // backend enforces free limit
     var usage = getGuestUsage();
-    var count = usage.count || 0;
-    if (count >= GUEST_LIMIT) {
+    if ((usage.count || 0) >= GUEST_LIMIT) {
       setAuthMode("limit");
       setShowAuth(true);
       return false;
@@ -765,16 +751,14 @@ export default function App() {
     return true;
   }
 
-  // Handle Razorpay payment
   async function handlePayment(plan) {
     var user = auth ? (auth.user || auth) : null;
     if (!user) { setShowUpgrade(false); setShowAuth(true); return; }
     setShowUpgrade(false);
-    await openRazorpayCheckout(plan, user.id, user.email, async function(paidPlan) {
+    await openRazorpayCheckout(plan, user.id, user.email, function() {
       setUserPlan("paid");
-      // Store plan in localStorage
       localStorage.setItem("pt_plan", JSON.stringify({ plan: "paid", userId: user.id, updatedAt: Date.now() }));
-      alert("Payment successful! You now have unlimited access to PartTensor.");
+      alert("Payment successful! You now have unlimited access.");
     });
   }
 
@@ -788,7 +772,6 @@ export default function App() {
     addMessage(userMsg);
     setLoading(true);
 
-    // Increment guest counter
     if (!auth) {
       var newCount = incrementGuestUsage();
       setGuestCount(newCount);
@@ -796,7 +779,6 @@ export default function App() {
 
     var history = messages.map(function(m) { return { role: m.role, content: m.content || "" }; });
 
-    // Create session if logged in and first message
     var sessionId = currentSessionId;
     if (!sessionId && auth) {
       var title = q.length > 40 ? q.substring(0, 40) + "..." : q;
@@ -809,7 +791,6 @@ export default function App() {
       }
     }
 
-    // Save user message
     if (sessionId && auth) {
       var user2 = auth.user || auth;
       await saveMessage(sessionId, user2.id, "user", q, null, auth.access_token);
@@ -831,15 +812,10 @@ export default function App() {
       var data = await res.json();
 
       if (data.error) {
-        // Check if limit error from backend
         if (data.limitReached) {
           setLoading(false);
-          if (auth) {
-            setShowUpgrade(true);
-          } else {
-            setAuthMode("limit");
-            setShowAuth(true);
-          }
+          if (auth) { setShowUpgrade(true); }
+          else { setAuthMode("limit"); setShowAuth(true); }
           return;
         }
         if ((data.error.includes("busy") || data.error.includes("overload")) && retryRef.current < 2) {
@@ -855,7 +831,6 @@ export default function App() {
 
       retryRef.current = 0;
 
-      // BOM stock background loading
       if (data.bomItems && data.bomItems.length > 0) {
         var bomPNs = data.bomItems.map(function(p) { return p.partNumber; });
         fetch(BACKEND_URL + "/api/stock-bulk", {
@@ -877,7 +852,6 @@ export default function App() {
       var aiMsg = { role: "assistant", content: data.text || "", data: data, id: Date.now() };
       addMessage(aiMsg);
 
-      // Save AI message if logged in
       if (sessionId && auth) {
         var user3 = auth.user || auth;
         await saveMessage(sessionId, user3.id, "assistant", data.text || "", data, auth.access_token);
@@ -912,10 +886,10 @@ export default function App() {
         var a = document.createElement("a");
         a.href = url; a.download = file.name.replace(/\.[^.]+$/, "") + "_PartTensor.csv"; a.click();
         URL.revokeObjectURL(url);
-        addMessage({ role: "assistant", content: "Your BOM has been enriched with alternatives and live stock data. The file has been downloaded.", id: Date.now() });
+        addMessage({ role: "assistant", content: "Your BOM has been enriched with alternatives and live stock data. Download started.", id: Date.now() });
       } else {
-        var data = await res.json();
-        addMessage({ role: "assistant", content: data.error ? "Error: " + data.error : (data.text || "Done!"), data: data, id: Date.now() });
+        var d2 = await res.json();
+        addMessage({ role: "assistant", content: d2.error ? "Error: " + d2.error : (d2.text || "Done!"), data: d2, id: Date.now() });
       }
     } catch (err) {
       addMessage({ role: "assistant", content: "Failed to process file. Please try again.", id: Date.now() });
@@ -926,9 +900,6 @@ export default function App() {
 
   var user = auth ? (auth.user || auth) : null;
   var isEmpty = messages.length === 0;
-  var limit = auth ? FREE_LIMIT : GUEST_LIMIT;
-  var used = guestCount;
-  var remaining = Math.max(0, limit - used);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f8fafc", fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
@@ -944,20 +915,13 @@ export default function App() {
       {showUpgrade && <UpgradeModal onClose={function() { setShowUpgrade(false); }} onSignIn={function() { setShowUpgrade(false); setShowAuth(true); }} onPay={handlePayment} />}
 
       {auth && (
-        <Sidebar
-          sessions={sessions}
-          currentSessionId={currentSessionId}
-          onSelectSession={handleSelectSession}
-          onNewChat={startNewChat}
+        <Sidebar sessions={sessions} currentSessionId={currentSessionId} onSelectSession={handleSelectSession} onNewChat={startNewChat}
           onDeleteSession={async function(id) {
             await deleteSession(id, auth.access_token);
             if (id === currentSessionId) { setMessages([]); setCurrentSessionId(null); }
             await loadSessions();
           }}
-          user={user}
-          onSignOut={handleSignOut}
-          open={sidebarOpen}
-          onClose={function() { setSidebarOpen(false); }}
+          user={user} onSignOut={handleSignOut} open={sidebarOpen} onClose={function() { setSidebarOpen(false); }}
         />
       )}
 
@@ -972,24 +936,22 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Usage indicator */}
           {!auth && guestCount > 0 && (
             <div style={{ fontSize: 11, color: guestCount >= GUEST_LIMIT - 2 ? "#dc2626" : "#64748b", background: guestCount >= GUEST_LIMIT - 2 ? "#fef2f2" : "#f8fafc", padding: "4px 10px", borderRadius: 99, border: "1px solid " + (guestCount >= GUEST_LIMIT - 2 ? "#fecaca" : "#e2e8f0") }}>
               {GUEST_LIMIT - guestCount} free left
             </div>
           )}
-          {auth && (
-            <div style={{ fontSize: 11, color: "#64748b", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user && user.email}</div>
-          )}
+          {auth && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 130, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user && user.email}</div>}
+          {userPlan === "paid" && <div style={{ fontSize: 11, color: "#7c3aed", background: "#faf5ff", padding: "3px 10px", borderRadius: 99, fontWeight: 700, border: "1px solid #e9d5ff" }}>PRO</div>}
           {!auth ? (
             <button onClick={function() { setAuthMode("default"); setShowAuth(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#1d4ed8,#4f46e5)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               Sign In
             </button>
-          ) : (
+          ) : userPlan !== "paid" ? (
             <button onClick={function() { setShowUpgrade(true); }} style={{ padding: "6px 14px", borderRadius: 8, background: "linear-gradient(135deg,#7c3aed,#6d28d9)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
               Upgrade
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -1004,7 +966,8 @@ export default function App() {
             <p style={{ fontSize: 14, color: "#64748b", marginBottom: 12, textAlign: "center", maxWidth: 400, lineHeight: 1.7 }}>Find components, check live stock, generate BOMs, and get circuit design help.</p>
             {!auth && (
               <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 28, background: "#f8fafc", padding: "8px 16px", borderRadius: 99, border: "1px solid #e2e8f0" }}>
-                {GUEST_LIMIT} free messages/day - <button onClick={function() { setShowAuth(true); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Sign in for {FREE_LIMIT}/day</button>
+                {GUEST_LIMIT} free messages/day
+                <button onClick={function() { setShowAuth(true); }} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontWeight: 600, marginLeft: 6, fontSize: 12 }}>Sign in for {FREE_LIMIT}/day</button>
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, width: "100%", maxWidth: 580 }}>
@@ -1028,7 +991,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Soft nudge when approaching limit */}
         {!auth && guestCount === GUEST_LIMIT - 2 && (
           <div style={{ textAlign: "center", padding: "12px 20px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, marginBottom: 16, fontSize: 13, color: "#92400e" }}>
             2 free messages remaining today.
@@ -1045,11 +1007,11 @@ export default function App() {
         AI results may be inaccurate - Always verify against official datasheets before ordering
       </div>
 
-      {/* Input area */}
+      {/* Input */}
       <div style={{ padding: "12px 20px 16px", background: "#fff", borderTop: "1px solid #e2e8f0", maxWidth: 820, width: "100%", margin: "0 auto", boxSizing: "border-box", flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelUpload} style={{ display: "none" }} />
-          <button onClick={function() { fileInputRef.current && fileInputRef.current.click(); }} disabled={loading} title="Upload BOM" style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 10, background: "#f1f5f9", border: "1px solid #e2e8f0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>DS</button>
+          <button onClick={function() { fileInputRef.current && fileInputRef.current.click(); }} disabled={loading} title="Upload BOM" style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 10, background: "#f1f5f9", border: "1px solid #e2e8f0", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>BOM</button>
           <div style={{ flex: 1, display: "flex", alignItems: "flex-end", background: "#f8fafc", borderRadius: 14, border: "1.5px solid #e2e8f0", padding: "10px 14px", gap: 8 }}>
             <textarea ref={inputRef} value={input} onChange={function(e) { setInput(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }} onKeyDown={function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Ask about parts, circuits, calculations or upload a BOM..." rows={1} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "#0f172a", fontSize: 14, lineHeight: 1.6, resize: "none", maxHeight: 120, overflowY: "auto", fontFamily: "inherit" }} />
             <button onClick={function() { sendMessage(); }} disabled={loading || !input.trim()} style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 9, background: !input.trim() ? "#e2e8f0" : "linear-gradient(135deg,#1d4ed8,#4f46e5)", border: "none", cursor: !input.trim() ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1057,7 +1019,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>Shift+Enter for new line - upload BOM with DS</div>
+        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>Shift+Enter for new line - upload BOM with BOM</div>
       </div>
     </div>
   );
