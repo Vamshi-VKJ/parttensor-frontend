@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 
 const BACKEND_URL = "https://parttensor-backend.onrender.com";
 const SUPABASE_URL = "https://pchmgfmrdsnuhijbdgys.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5NzM0NjQsImV4cCI6MjA2MDU0OTQ2NH0";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBjaG1nZm1yZHNudWhpamJkZ3lzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MzUwMDUsImV4cCI6MjA5MjAxMTAwNX0.Rta2rut_nxF0nUqwfGYuCm3GwYHUQCY-54KnwgF9rZw";
 const RAZORPAY_KEY_ID = "rzp_test_REPLACE_WITH_YOUR_KEY";
 
 var GUEST_LIMIT = 5;
